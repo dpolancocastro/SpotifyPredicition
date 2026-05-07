@@ -1,3 +1,5 @@
+import re
+
 import pandas as pd
 import numpy as np
 import joblib
@@ -14,7 +16,25 @@ from config import (
     FEATURE_COLUMNS,
     TARGET_COLUMN,
     GENRE_COLUMN,
+    NUM_GENRES_TO_TRAIN,
+    MIN_SONGS_PER_GENRE,
 )
+
+
+def make_safe_filename(text):
+    """
+    Converts a genre name into a safe filename.
+
+    Example:
+    "r&b" becomes "r_b"
+    "latin pop" becomes "latin_pop"
+    """
+
+    text = text.lower().strip()
+    text = re.sub(r"[^a-z0-9]+", "_", text)
+    text = text.strip("_")
+
+    return text
 
 
 def calculate_baseline(y_train, y_test):
@@ -58,6 +78,26 @@ def choose_cv_folds(num_samples):
         return 5
 
 
+def get_top_genres(df):
+    """
+    Selects the top genres with the most songs.
+
+    This makes sure we train models for genres that have enough data.
+    """
+
+    genre_counts = df[GENRE_COLUMN].value_counts()
+
+    eligible_genres = genre_counts[genre_counts >= MIN_SONGS_PER_GENRE]
+
+    selected_genres = eligible_genres.head(NUM_GENRES_TO_TRAIN).index.tolist()
+
+    print("\nSelected genres for training:")
+    for genre in selected_genres:
+        print(f"- {genre}: {genre_counts[genre]} songs")
+
+    return selected_genres
+
+
 def train_model_for_genre(genre_name, genre_df):
     """
     Trains and evaluates one Random Forest model for one genre.
@@ -73,7 +113,7 @@ def train_model_for_genre(genre_name, genre_df):
 
     num_songs = len(genre_df)
 
-    if num_songs < 100:
+    if num_songs < MIN_SONGS_PER_GENRE:
         print(f"Skipping {genre_name}: not enough data ({num_songs} songs).")
         return None
 
@@ -162,7 +202,7 @@ def train_model_for_genre(genre_name, genre_df):
     model_r2 = r2_score(y_test, predictions)
 
     # Save trained model
-    safe_genre_name = genre_name.replace(" ", "_").replace("/", "_")
+    safe_genre_name = make_safe_filename(genre_name)
     model_path = MODELS_DIR / f"model_{safe_genre_name}.pkl"
     joblib.dump(model, model_path)
 
@@ -194,9 +234,9 @@ def train_model_for_genre(genre_name, genre_df):
     return result
 
 
-def train_all_genre_models():
+def train_selected_genre_models():
     """
-    Loads the cleaned data and trains a separate model for each genre.
+    Loads the cleaned data and trains a separate model for the top selected genres.
     """
 
     df = pd.read_csv(CLEANED_DATA_FILE)
@@ -204,11 +244,15 @@ def train_all_genre_models():
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
+    selected_genres = get_top_genres(df)
+
+    if len(selected_genres) == 0:
+        print("No genres have enough data to train a model.")
+        return pd.DataFrame()
+
     results = []
 
-    genres = sorted(df[GENRE_COLUMN].unique())
-
-    for genre in genres:
+    for genre in selected_genres:
         print(f"\nTraining model for genre: {genre}")
 
         genre_df = df[df[GENRE_COLUMN] == genre].copy()
@@ -253,4 +297,4 @@ def train_all_genre_models():
 
 
 if __name__ == "__main__":
-    train_all_genre_models()
+    train_selected_genre_models()
